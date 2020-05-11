@@ -1,15 +1,13 @@
 # info in https://colab.research.google.com/drive/1JW2I6cU_ypfRXfIfqMPQwMEA6LzGav-Y#forceEdit=true&sandboxMode=true&scrollTo=KY7W_YW5s5Jw
-#def simple_classification(df):
 import pandas as pd
-
-def logistic_regression_classification(df, column_to_predict):
+def preprocessing_samples(df):
     # preprocessing classification
     # convert tags into classes with numbers 
     df['category_id'] = df['tag'].factorize()[0]
-    category_id_df = df[['tag', 'category_id']].drop_duplicates().sort_values('category_id')
-    category_to_id = dict(category_id_df.values)
-    id_to_category = dict(category_id_df[['category_id', 'tag']].values)
+    labels = df.category_id
+    return df, labels
 
+def feature_extraction(column):
     # feature extraction
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.feature_extraction import text
@@ -27,14 +25,17 @@ def logistic_regression_classification(df, column_to_predict):
                         ngram_range=(1, 2), stop_words=my_stop_words, use_idf = True)
     # columns are the different terms and the rows are the number of documents (here headlines)
     # apply function fit trasform to generate the features
-    features = tfidf.fit_transform(df.headline).toarray()
-    labels = df.category_id
-    # transform unlabeled data into features
-    dutch_news_features = tfidf.transform(column_to_predict).toarray()
+    features = tfidf.fit_transform(column).toarray()
+    
+    return features, tfidf
 
+def most_dominant_features(df, features, tfidf, labels):
     # Chi-square test to find the most dependant features that can predict the target variable
     from sklearn.feature_selection import chi2
     import numpy as np
+    category_id_df = df[['tag', 'category_id']].drop_duplicates().sort_values('category_id')
+    category_to_id = dict(category_id_df.values)
+    
     N = 5
     for category, category_id in sorted(category_to_id.items()):
     # x- squared test is a feature selection technique
@@ -50,22 +51,23 @@ def logistic_regression_classification(df, column_to_predict):
       print("# '{}':".format(category))
       print("  . Most correlated unigrams:\n       . {}".format('\n       . '.join(unigrams[-N:])))
       print("  . Most correlated bigrams:\n       . {}".format('\n       . '.join(bigrams[-N:])))
+    return
  
-    ## t-SNE clustering to find how much the documents are distinguishable   
-    #from sklearn.manifold import TSNE
-    #import matplotlib.pyplot as plt
-    ## Sampling a subset of our dataset because t-SNE is computationally expensive
-    #SAMPLE_SIZE = int(len(features))
-    #np.random.seed(0)
-    #indices = np.random.choice(range(len(features)), size=SAMPLE_SIZE, replace=False)
-    #projected_features = TSNE(n_components=2, random_state=0).fit_transform(features[indices])
-    #colors = ['pink', 'green', 'midnightblue', 'orange']
-    #for category, category_id in sorted(category_to_id.items()):
-    #    points = projected_features[(labels[indices] == category_id).values]
-    #    plt.scatter(points[:, 0], points[:, 1], s=30, c=colors[category_id], label=category, alpha = 0.3)
-    #plt.title("tf-idf feature vector for each article, projected on 2 dimensions.",
-    #          fontdict=dict(fontsize=15))
-    #plt.legend()
+#    # t-SNE clustering to find how much the documents are distinguishable   
+#    from sklearn.manifold import TSNE
+#    import matplotlib.pyplot as plt
+#    # Sampling a subset of our dataset because t-SNE is computationally expensive
+#    SAMPLE_SIZE = int(len(features))
+#    np.random.seed(0)
+#    indices = np.random.choice(range(len(features)), size=SAMPLE_SIZE, replace=False)
+#    projected_features = TSNE(n_components=2, random_state=0).fit_transform(features[indices])
+#    colors = ['pink', 'green', 'midnightblue', 'orange']
+#    for category, category_id in sorted(category_to_id.items()):
+#        points = projected_features[(labels[indices] == category_id).values]
+#        plt.scatter(points[:, 0], points[:, 1], s=30, c=colors[category_id], label=category, alpha = 0.3)
+#    plt.title("tf-idf feature vector for each article, projected on 2 dimensions.",
+#              fontdict=dict(fontsize=15))
+#    plt.legend()
   
     ## hyperparameter tuning for logistic regression(C regularization coefficient - l1,l2 regularization)
     #from sklearn.linear_model import LogisticRegression
@@ -85,39 +87,50 @@ def logistic_regression_classification(df, column_to_predict):
     #print('Best Penalty:', best_model.best_estimator_.get_params()['penalty'])
     #print('Best C:', best_model.best_estimator_.get_params()['C'])
 
+def cross_validation_logistic_regression(df):
+    [df, labels] = preprocessing_samples(df)
+    [features, tfidf] = feature_extraction(df.headline)
+#     Validate different models
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import cross_val_score
+    from sklearn.model_selection import cross_val_predict
+    import numpy as np
+    models = [
+            LogisticRegression(C=5,solver='saga',penalty='elasticnet',l1_ratio=0.5)
+            ]
+    CV = 10
+    cv_df = pd.DataFrame(index=range(CV * len(models)))
+    entries = []
+    for model in models:
+        model_name = model.__class__.__name__
+        print(model_name)
+        accuracies = cross_val_score(model, features, labels, scoring='accuracy', cv=CV,  n_jobs = -1)
+        predictions_labels = cross_val_predict(model, features, labels, cv=CV,  n_jobs = -1)
+        predictions_proba = cross_val_predict(model, features, labels, cv=CV,  n_jobs = -1, method = 'predict_proba')
+        predictions_proba = predictions_proba.max(axis = 1)
+        for fold_idx, accuracy in enumerate(accuracies):
+            entries.append((model_name, fold_idx, accuracy))
+        cv_df = pd.DataFrame(entries, columns=['model_name', 'fold_idx', 'accuracy'])
+    import seaborn as sns
+    sns.boxplot(x='model_name', y='accuracy', data=cv_df)
+    sns.stripplot(x='model_name', y='accuracy', data=cv_df, 
+              size=8, jitter=True, edgecolor="gray", linewidth=2)
+    predictions = pd.concat([pd.DataFrame(predictions_labels),pd.DataFrame(predictions_proba)], axis = 1)
+    predictions.columns = ['label_id','probability']
+    predictions['label'] = np.where(predictions['label_id'] == 0, 'economy' ,
+                                       np.where(predictions['label_id'] == 1, 'healthcare', 
+                                            np.where(predictions['label_id'] == 2,'science','travel' )))
+    return predictions
 
-    # Validate different models
-#    from sklearn.linear_model import LogisticRegression
-#    from sklearn.ensemble import RandomForestClassifier
-#    from sklearn.svm import LinearSVC
-#    from sklearn.model_selection import cross_val_score
-#    from sklearn.model_selection import cross_val_predict
-#    models = [
-#            LogisticRegression(C=5,solver='saga',penalty='elasticnet',l1_ratio=0.5)
-#            ]
-#    CV = 10
-#    cv_df = pd.DataFrame(index=range(CV * len(models)))
-#    entries = []
-#    for model in models:
-#        model_name = model.__class__.__name__
-#        print(model_name)
-#        accuracies = cross_val_score(model, features, labels, scoring='accuracy', cv=CV,  n_jobs = -1)
-#
-#        probabilities_per_label = cross_val_predict(model, features, labels, cv=CV, method='predict_proba', n_jobs = -1)
-#        
-#        
-#        labels_predicted = cross_val_predict(model, features, labels, cv=CV,  n_jobs = -1)
-#        for fold_idx, accuracy in enumerate(accuracies):
-#            entries.append((model_name, fold_idx, accuracy))
-#        cv_df = pd.DataFrame(entries, columns=['model_name', 'fold_idx', 'accuracy'])
-#    import seaborn as sns
-#    sns.boxplot(x='model_name', y='accuracy', data=cv_df)
-#    sns.stripplot(x='model_name', y='accuracy', data=cv_df, 
-#              size=8, jitter=True, edgecolor="gray", linewidth=2)
-
+def logistic_regression_classification(df, column_to_predict):
+    import numpy as np
+    [df, labels] = preprocessing_samples(df)
+    # feature extraction
+    [features, tfidf] = feature_extraction(df.headline)
+    dutch_news_features = tfidf.transform(column_to_predict).toarray()
+    
+    most_dominant_features(df, features, tfidf, labels)
     # Select a model from the above and train it 
- 
-
     from sklearn.linear_model import LogisticRegression
     model = LogisticRegression(C=5,solver='saga',penalty='elasticnet',l1_ratio=0.5)
     model.fit(features, labels)
@@ -125,10 +138,13 @@ def logistic_regression_classification(df, column_to_predict):
     maximum_probabilities =  pd.DataFrame(y_pred_proba.max(axis = 1))
     y_pred = pd.DataFrame(model.predict(dutch_news_features))
 
-    
-
     predictions = pd.DataFrame(pd.concat([y_pred, maximum_probabilities], axis = 1))
-    predictions.columns = ['label','probability']
+    predictions.columns = ['label_id','probability']
+    predictions['label'] = np.where(predictions['label_id'] == 0, 'economy' ,
+                                       np.where(predictions['label_id'] == 1, 'healthcare', 
+                                            np.where(predictions['label_id'] == 2,'science','travel' )))
+   
+    
     return predictions
 
 
@@ -153,7 +169,7 @@ def logistic_regression_classification(df, column_to_predict):
 #
 #
 #from IPython.display import display
-#
+#id_to_category = dict(category_id_df[['category_id', 'tag']].values)
 #for predicted in category_id_df.category_id:
 #  for actual in category_id_df.category_id:
 #    if predicted != actual and conf_mat[actual, predicted] >= 2:

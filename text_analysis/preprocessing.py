@@ -124,9 +124,9 @@ def translate(dutch_news_new, date):
     return dutch_news_new
 
 def new_test_data(date):
-    # 22 until 24 , start with 25
+    # 22/4 until 4/5 , start with 5
     number_of_dates_dutch = 1 
-    start_date = datetime.date(2020, 4, 29)
+    start_date = datetime.date(2020, 5, 5)
     
     date = start_date
     dutch_news = pd.DataFrame()

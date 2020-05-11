@@ -1,7 +1,6 @@
 def polarity(column):
     from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
     import pandas as pd
-
     # apply vader
     final_results = pd.DataFrame()
     for i in range(len(column)):
